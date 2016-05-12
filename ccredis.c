@@ -283,20 +283,12 @@ struct redisClient* createRedisClnt(const char* host, int port, int timeout){
 		goto out;
 	
 	// is cluster?
-#if 0
-	int i;
-	for (i = 0; i < r->elements-1; i++){
-        if(strstr(r->element[i]->str, "cluster_enabled")){
-            c->bcluster = atoi(r->element[i+1]->str);
-			break;
-        }
-	}
-#endif //0
 	if (strstr(r->str, "cluster_enabled:1")){
         c->bcluster = 1;
 	}
 	if(c->bcluster){
 		c->slots[0].ctx = c->ctx;
+		c->ctx = NULL;
 		strncpy(c->slots[0].host, host, HOST_LEN);
 		c->slots[0].port = port;
 		//c->slots[0].usetime = c->usetime;
@@ -618,12 +610,14 @@ static int fetchAllReplys(void* pipeline, redisContext* ctx){
 		    ret = CC_RQST_ERR;
 		    continue;
 		}
-		freeReplyObject(reply);
+		if(reply)
+		    freeReplyObject(reply);
 	}
 	return ret;
 }
 
 int flushPipeline(void* pipeline){
+
     if(pipeline == NULL)
 		return CC_PARAM_ERR;
 	struct pipeLine* p = (struct pipeLine*)pipeline;
@@ -635,12 +629,18 @@ int flushPipeline(void* pipeline){
 	 	return CC_RQST_ERR;
 
 	int ret = CC_SUCCESS;
+
+
 	ret = appendAllCmds(p, ctx);
 	if(ret != CC_SUCCESS){
         freeAllCmdStrs(p);
 		return ret;
 	}
+
+
 	ret = fetchAllReplys(p, ctx);
+
+#if 0
 	if(ret != CC_SUCCESS){
         p->c->bvalid = loadCluster(p->c);
 		if(!p->c->bvalid){
@@ -659,7 +659,9 @@ int flushPipeline(void* pipeline){
             return CC_PIPELINE_ERR;
 		}
 	}
+#endif
 	freeAllCmdStrs(p);
+
 	return CC_SUCCESS;
 }
 
@@ -771,15 +773,15 @@ int redisIncrby(struct redisClient* c, const char* key, long incr, long* ret, vo
 	return executeCmd(c, hashSlot(key), cmd, ret, -1, fetchInteger, pipeline);
 }
 
-int redisMget(struct redisClient* c, const char **keys, char **vals, int strsize, long arylen, void* pipeline){
+int redisMget(struct redisClient* c, const char **keys, char **vals, int strsize, long* arylen, void* pipeline){
 	if(c->bcluster || pipeline){
-		if(!isSameHashslot(keys, strsize, arylen)){
+		if(!isSameHashslot(keys, strsize, *arylen)){
 			return CC_NOT_SAME_HASHSLOT;
 		}
 	}
 	sds cmd = cmdnew("mget");
-	cmd = cmdcats(cmd,keys,strsize,arylen);
-	struct straryArg arg = {vals, strsize, &arylen};
+	cmd = cmdcats(cmd,keys,strsize,*arylen);
+	struct straryArg arg = {vals, strsize, arylen};
 	return executeCmd(c, hashSlot((char*)keys), cmd, &arg, sizeof(arg), fetchStringArray, pipeline);
 }
 
@@ -797,11 +799,11 @@ int redisMset(struct redisClient* c, const char **keys, const char **vals, int s
 }
 
 
-int redisHmget(struct redisClient* c, const char* key, const char** fields, char** vals, long strsize, long arylen, void* pipeline){
+int redisHmget(struct redisClient* c, const char* key, const char** fields, char** vals, long strsize, long* arylen, void* pipeline){
     sds cmd = cmdnew("hmget");
 	cmd = cmdcat(cmd, key);
-	cmd = cmdcats(cmd, fields, strsize, arylen);
-	struct straryArg arg = {vals, strsize, &arylen};
+	cmd = cmdcats(cmd, fields, strsize, *arylen);
+	struct straryArg arg = {vals, strsize, arylen};
 	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchStringArray, pipeline);
 }
 

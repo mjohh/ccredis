@@ -80,8 +80,8 @@ int redisIncr(struct redisClient* c, const char* key, long* ret, void* pipeline)
 
 //ret: pinter to value of key after the increment
 int redisIncrby(struct redisClient* c, const char* key, long incr, long* ret, void* pipeline);
-int redisMget(struct redisClient* c, const char **keys, char **vals, int strsize, long arylen, void* pipeline);
+int redisMget(struct redisClient* c, const char **keys, char **vals, int strsize, long* arylen, void* pipeline);
 int redisMset(struct redisClient* c, const char **keys, const char **vals, int strsize, long arylen, void* pipeline);
-int redisHmget(struct redisClient* c, const char* key, const char** fields, char** vals, long strsize, long arylen, void* pipeline);
+int redisHmget(struct redisClient* c, const char* key, const char** fields, char** vals, long strsize, long* arylen, void* pipeline);
 int redisHmset(struct redisClient* c, const char* key, const char** fields, const char** vals, long strsize, long arylen, void* pipeline);
 #endif //__CCREDIS_H
