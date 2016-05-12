@@ -1,8 +1,10 @@
-```
-# ccredis
-ccredis focus on using cluster and pipeline of redis.
-you could use cluster and pipeline at the same time, and in very simply and naturely way:
 
+# ccredis
+- focus on using cluster and pipeline besides single node
+- minimize: less than 1000 lines src
+- nature using way: using cluster and pipeline like single node
+- force highest efficiency: only allow keys have same hashslot in one pipeline
+```
 #define IP "127.0.0.1"
 #define PORT 6379
 #define TIMEOUT 2
@@ -20,6 +22,7 @@ static void testclusterpipeline(){
 	assert(pipeline);
 
 	test("redisSet/redisGet ");
+	// add tag {p} for pipeline
         int rv = redisSet(c, "{p}k1", "v1", pipeline);
 	assert(rv == CC_SUCCESS);
 
@@ -47,9 +50,5 @@ static void testclusterpipeline(){
 	rv = flushPipeline(pipeline);
 	
 	test_cond(rv == CC_SUCCESS && 0==strcmp("v1", val) && ret1 == 1 && ret2 == 0 && val1[0] == 0);
-	
-	attention:
-	for efficiency, all keys in one pipeline must has same hashslot, 
-	so you should add same tag (like {p} in upper sample) for all keys.
 ``` 
   
