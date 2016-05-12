@@ -495,17 +495,17 @@ int pushPipeline(void* pipeline, sds cmdstr, void* result, size_t resultsz, fetc
 int executeImplPipeline(struct redisClient* c, int hashslot, sds cmdstr, 
 	                                void* result, int resultsz, fetchFunc fetch, void* pipeline){
 	 struct pipeLine* p = (struct pipeLine*)pipeline;
-	 if(p->c->bcluster){
-	 	 // if is cluster, all key should has same hashslot
-		 if(p->used == 0){
-		     p->hashslot = hashslot;
-			 p->c = c;
-		 }else{
-		     if(p->hashslot != hashslot)
-			 	return CC_NOT_SAME_HASHSLOT;
-			 if(p->c != c)
-			 	return CC_PIPELINE_ERR;
-		 }
+	 if (p->used == 0){
+	 	assert(p->c==NULL);
+        p->c = c;
+		if(p->c->bcluster){
+            p->hashslot = hashslot;
+		}
+	 }else{
+	     if(p->c != c)
+			return CC_PIPELINE_ERR;
+         if(p->c->bcluster && p->hashslot != hashslot)
+		    return CC_NOT_SAME_HASHSLOT;
 	 }
 	 pushPipeline(p, cmdstr, result, resultsz, fetch);
 	 return CC_SUCCESS;
@@ -517,6 +517,7 @@ void* createPipeline(int initlen){
     struct pipeLine* p = malloc(sizeof(struct pipeLine));
 	if (p==NULL)
 		return NULL;
+	memset(p, 0, sizeof(*p));
     p->len = initlen;
 	p->used = 0;
 	p->cmds = malloc(sizeof(struct cmdObj)*p->len);
