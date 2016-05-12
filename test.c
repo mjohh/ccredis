@@ -284,8 +284,8 @@ static void testpipeline(){
 	test_cond(rv == CC_SUCCESS && 0==strcmp("v1", val) && ret1 == 1 && ret2 == 0 && val1[0] == 0 && ret3 == 0 
 		&& val2[0] == 0 && 0==strcmp(val3, "v2")&& ret4 == 1 && ret6 == 1 && ret7==20
 		&& ret9 == -1 && ret11==-20  && vals2[0][0]==0 && vals2[1][0]==0  && 0==strcmp(vals4[0],"v4") && 0==strcmp(vals4[1], "v5")
-		&& vals5[0][0]==0 && vals5[1][0]==0 && vals5[2][0]==0/*
-		&& 0==strcmp(vals7[0],"v1") && 0==strcmp(vals7[1],"v2") && 0==strcmp(vals7[2],"v3")*/);
+		&& vals5[0][0]==0 && vals5[1][0]==0 && vals5[2][0]==0
+		&& 0==strcmp(vals7[0],"v1") && 0==strcmp(vals7[1],"v2") && 0==strcmp(vals7[2],"v3"));
 	
     deletePipeline(pipeline);
 	deleteRedisClnt(c);
@@ -565,8 +565,8 @@ static void testclusterpipeline(){
 	test_cond(rv == CC_SUCCESS && 0==strcmp("v1", val) && ret1 == 1 && ret2 == 0 && val1[0] == 0 && ret3 == 0 
 		&& val2[0] == 0 && 0==strcmp(val3, "v2")&& ret4 == 1 && ret6 == 1 && ret7==20
 		&& ret9 == -1 && ret11==-20  && vals2[0][0]==0 && vals2[1][0]==0  && 0==strcmp(vals4[0],"v4") && 0==strcmp(vals4[1], "v5")
-		&& vals5[0][0]==0 && vals5[1][0]==0 && vals5[2][0]==0/*
-		&& 0==strcmp(vals7[0],"v1") && 0==strcmp(vals7[1],"v2") && 0==strcmp(vals7[2],"v3")*/);
+		&& vals5[0][0]==0 && vals5[1][0]==0 && vals5[2][0]==0
+		&& 0==strcmp(vals7[0],"v1") && 0==strcmp(vals7[1],"v2") && 0==strcmp(vals7[2],"v3"));
 	
     deletePipeline(pipeline);
 	deleteRedisClnt(c);

@@ -640,7 +640,7 @@ int flushPipeline(void* pipeline){
 
 	ret = fetchAllReplys(p, ctx);
 
-#if 0
+#if 1
 	if(ret != CC_SUCCESS){
         p->c->bvalid = loadCluster(p->c);
 		if(!p->c->bvalid){
