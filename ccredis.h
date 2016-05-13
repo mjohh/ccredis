@@ -30,15 +30,15 @@ struct clusterSlot{
 	int timeout;
 	//int usetime;
 	char host[HOST_LEN];
-    int port;
+	int port;
 	redisContext *ctx;
 	int startslot;
 	int endslot;
 };
 
 struct redisClient{
-    BOOL bcluster;
-    BOOL bvalid;
+	BOOL bcluster;
+	BOOL bvalid;
 
 	///info for non-cluster enviroment
 	int timeout;
@@ -48,7 +48,7 @@ struct redisClient{
 	redisContext *ctx;
 
 	////info for cluster enviroment
-    struct clusterSlot slots[SERVER_NUM];
+	struct clusterSlot slots[SERVER_NUM];
 	int nslot;
 };
 
