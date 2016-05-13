@@ -198,25 +198,6 @@ static int fetchStringArray(redisReply *reply, void* p) {
     return _fetchStringArray(reply, ary, strlen, arylen);
 }
 
-static int _fetchMap(redisReply *reply, char** ary, long strlen, long* arylen) {
-    if (reply->type == REDIS_REPLY_ARRAY) {
-        if ((reply->elements % 2) != 0)
-            return CC_REPLY_ERR;
-        return _fetchStringArray(reply, ary, strlen, arylen);
-    }
-    else
-        return CC_REPLY_ERR;
-}
-
-static int fetchMap(redisReply *reply, void* p) {
-	struct straryArg* val = (struct straryArg*)p;
-	char** ary = val->ary;
-	long strlen = val->strlen;
-	long* arylen = val->arylen;
-    return _fetchMap(reply, ary, strlen, arylen);
-}
-
-
 static int fetchTime(redisReply *reply, void* p) {
     struct timeval* val = (struct timeval*)p;
     if (reply->type == REDIS_REPLY_ARRAY) {
@@ -296,6 +277,9 @@ struct redisClient* createRedisClnt(const char* host, int port, int timeout){
 		c->nslot=1;
 		c->bvalid = loadCluster(c);
 	}else{
+	    c->port = port;
+		strncpy(c->host, host, HOST_LEN);
+		c->timeout = timeout;
         c->bvalid = TRUE;
 	}
     freeReplyObject(r);
@@ -320,31 +304,6 @@ void deleteRedisClnt(struct redisClient* c){
 		}
 	}
 	free(c);
-}
-
-static BOOL connectToRedis(struct redisClient* c, const char* host, int port, int timeout)
-{
-    struct timeval tm = {timeout, 0};
-    c->ctx = redisConnectWithTimeout(host, port, tm);
-    if (!checkConnectResult(c->ctx))
-		return FALSE;
-	
-    //c->usetime = time(NULL);
-	c->timeout = timeout;
-	redisSetTimeout(c->ctx, tm);
-    return TRUE;
-}
-
-
-
-static BOOL checkConnectResult(redisContext* ctx){
-    if (!ctx || ctx->err){
-        if (ctx){
-            redisFree(ctx);
-        }
-        return FALSE;
-    }
-	return TRUE;
 }
 
 static BOOL tryLoadCluster(redisContext* ctx, struct clusterSlot slots[], int* nslot, long timeout);
@@ -386,8 +345,13 @@ static BOOL tryLoadCluster(redisContext* ctx, struct clusterSlot* slots, int* ns
 		if(slot->ctx)
 			redisFree(slot->ctx);
         slot->ctx = redisConnectWithTimeout(slot->host, slot->port, tm);
-        if(!checkConnectResult(slot->ctx))
+        if(!slot->ctx || slot->ctx->err){
+			if(slot->ctx){
+                redisFree(slot->ctx);
+				slot->ctx = NULL;
+			}
 			goto out;
+		}
         redisSetTimeout(slot->ctx, tm);
         //slot->usetime = time(NULL);
 		slot->timeout = timeout;
@@ -427,21 +391,20 @@ static struct clusterSlot* findSlot(struct redisClient* c, int hashslot){
 	}
 	return NULL;
 }
+
 static redisContext* findContext(struct redisClient* c, int hashslot){
     redisContext* ctx;
-	if(!c->bcluster){
-        ctx = c->ctx;
-	}else{
-        assert(hashslot != -1);
-		struct clusterSlot* slot = findSlot(c, hashslot);
-		if (slot==NULL)
-			return NULL;
-		ctx = slot->ctx;
-	}
+	assert(c->bcluster);
+    assert(hashslot != -1);
+	struct clusterSlot* slot = findSlot(c, hashslot);
+	if (slot==NULL)
+		return NULL;
+	ctx = slot->ctx;
 	return ctx;
 }
 
-BOOL isSameHashslot(const char** keys, size_t keysz, size_t keynum){
+
+static BOOL isSameHashslot(const char** keys, size_t keysz, size_t keynum){
     int i;
 	for(i = 0; i < keynum-1; i++){
         if(hashSlot((char*)keys+keysz*i) != hashSlot((char*)keys+keysz*(i+1)))
@@ -451,22 +414,90 @@ BOOL isSameHashslot(const char** keys, size_t keysz, size_t keynum){
 }
 
 
+static BOOL isServerClosed(redisContext* c){
+    return (c->err == REDIS_ERR_EOF || strstr(c->errstr, "Server closed"));
+}
+
+static BOOL reconnectServer(struct redisClient* c){
+    struct timeval tv = {c->timeout, 0};
+	if(c->ctx){
+        redisFree(c->ctx);
+	}
+    c->ctx = redisConnectWithTimeout(c->host, c->port, tv);
+    if(c->ctx==NULL || c->ctx->err){
+		if(c->ctx){
+			redisFree(c->ctx);
+            c->ctx = NULL;
+		}
+        return FALSE;
+	}
+	return TRUE;
+}
+
+static BOOL isMovedErr(redisContext*c){
+    return strstr(c->errstr, "MOVED")?TRUE:FALSE;
+}
+
+
+static BOOL reLoadServers(struct redisClient* c, redisContext* currentCtx){
+    if(c->bcluster){
+	    if(currentCtx==NULL || isMovedErr(currentCtx) || isServerClosed(currentCtx)){
+            c->bvalid = loadCluster(c);
+		    if(!c->bvalid){
+				return FALSE;
+		    }
+	    }else{
+            return FALSE;
+		}
+	}else{//single node
+        if(currentCtx==NULL || isServerClosed(currentCtx)){
+            if(!reconnectServer(c)){
+				return FALSE;
+			}
+		}else{
+            return FALSE;
+		}
+    }
+	return TRUE;
+}
+
 int executeImpl(struct redisClient* c, int hashslot, sds cmdstr, void* result, fetchFunc fetch){
 	if(c == NULL)
-		return CC_PARAM_ERR;
-    redisContext* ctx = findContext(c, hashslot);
-	 if(ctx == NULL)
-	 	return CC_RQST_ERR;
-	 redisReply* r = redisCommand(ctx, cmdstr);
-	 if(r == NULL){
-         sdsfree(cmdstr);
-		 return CC_RQST_ERR;
-	 }
-	 sdsfree(cmdstr);
-	 int ret = fetch(r, result);
-	 freeReplyObject(r);
-	 return ret;
+	    return CC_PARAM_ERR;
+	redisContext* ctx = c->bcluster?findContext(c, hashslot):c->ctx;
+	
+	int ret = CC_SUCCESS;
+	redisReply* r = NULL;
+    if(ctx)
+	    r = redisCommand(ctx, cmdstr);
+	// seem ctx==NULL as an request fail, and try again
+	if(ctx==NULL || r==NULL || ctx->err!=REDIS_OK){
+
+		if(!reLoadServers(c, ctx)){
+			ret = CC_RQST_ERR;
+			goto err;
+		}
+		ctx = c->bcluster?findContext(c, hashslot):c->ctx;
+		if(ctx == NULL){
+			ret = CC_RQST_ERR;
+			goto err;
+		}
+		//// try again
+	    r = redisCommand(ctx, cmdstr);
+		if(r==NULL || ctx->err!=REDIS_OK){
+			ret = CC_RQST_ERR;
+		    goto err;
+		}
+    }
+	ret = fetch(r, result);
+err:
+	if(r)
+	    freeReplyObject(r);
+	sdsfree(cmdstr);
+	return ret;
 }
+
+
 
 struct cmdObj{
     char buf[32];
@@ -596,8 +627,8 @@ static int fetchAllReplys(void* pipeline, redisContext* ctx){
 	// recv buf, which will affect next flush pipeline op
 	for(i=0; i<p->used; i++){
 		redisReply* reply = NULL;
-        int ret = redisGetReply(ctx, (void**)&reply);
-		if(ret != REDIS_OK || reply==NULL){
+        ret = redisGetReply(ctx, (void**)&reply);
+		if(ret != REDIS_OK || reply==NULL || ctx->err!=REDIS_OK){
 			ret = CC_RQST_ERR;
 			if(reply)
 				freeReplyObject(reply);
@@ -624,45 +655,42 @@ int flushPipeline(void* pipeline){
 
 	if(p->used==0)
 		return CC_SUCCESS;
-	redisContext* ctx = findContext(p->c, p->hashslot);
-	if(ctx == NULL)
-	 	return CC_RQST_ERR;
+	redisContext* ctx = p->c->bcluster?findContext(p->c, p->hashslot):p->c->ctx;
 
 	int ret = CC_SUCCESS;
-
-
-	ret = appendAllCmds(p, ctx);
-	if(ret != CC_SUCCESS){
-        freeAllCmdStrs(p);
-		return ret;
+	if(ctx){
+		ret = appendAllCmds(p, ctx);
+		if(ret != CC_SUCCESS){
+	        goto out;
+		}
+		ret = fetchAllReplys(p, ctx);
 	}
 
-
-	ret = fetchAllReplys(p, ctx);
-
-#if 1
-	if(ret != CC_SUCCESS){
-        p->c->bvalid = loadCluster(p->c);
-		if(!p->c->bvalid){
-            freeAllCmdStrs(p);
-			return CC_CLUSTER_ERR;
+	//// double try
+	// seem ctx==NULL as an request fail, and try again
+	if (ctx==NULL || ret != CC_SUCCESS){
+        if(!reLoadServers(p->c, ctx)){
+			ret = CC_RQST_ERR;
+			goto out;
+		}
+		ctx = p->c->bcluster?findContext(p->c, p->hashslot):p->c->ctx;
+		if(ctx == NULL){
+			ret = CC_RQST_ERR;
+			goto out;
 		}
 		//// try again
 		ret = appendAllCmds(p, ctx);
 	    if(ret != CC_SUCCESS){
-            freeAllCmdStrs(p);
-		    return ret;
+            goto out;
 	    }
 	    ret = fetchAllReplys(p, ctx);
 	    if(ret != CC_SUCCESS){
-			freeAllCmdStrs(p);
-            return CC_PIPELINE_ERR;
+			goto out;
 		}
 	}
-#endif
+out:
 	freeAllCmdStrs(p);
-
-	return CC_SUCCESS;
+	return ret;
 }
 
 sds cmdnew(const char* cmd){
