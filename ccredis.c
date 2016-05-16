@@ -215,15 +215,9 @@ static int fetchTime(redisReply *reply, void* p) {
 		return CC_REPLY_ERR;
 }
 
-struct slotArg{
-	struct clusterSlot* slots;
-	long* len;
-};
-static int fetchSlot(redisReply *reply, void* p)
+
+static int fetchSlot(redisReply *reply, struct clusterSlot* slots, int* len)
 {
-	struct slotArg* val = (struct slotArg*)p;
-	struct clusterSlot* slots = val->slots;
-	long* len = val->len;
 	if (reply->type == REDIS_REPLY_ARRAY) {
 		size_t i;
 		if (*len < reply->elements)
@@ -233,7 +227,6 @@ static int fetchSlot(redisReply *reply, void* p)
 			redisReply *subreply = reply->element[i];
 			if (subreply->type != REDIS_REPLY_ARRAY || subreply->elements < 3)
 				return CC_REPLY_ERR;
-
 			slots[i].startslot = subreply->element[0]->integer;
 			slots[i].endslot = subreply->element[1]->integer;
 			//slotReg.pRedisServ = nullptr;
@@ -268,6 +261,12 @@ struct redisClient* createRedisClnt(const char* host, int port, int timeout){
 		c->bcluster = 1;
 	}
 	if(c->bcluster){
+		c->slots = malloc(sizeof(struct clusterSlot));
+		memset(c->slots, 0, sizeof(struct clusterSlot));
+		if(c->slots==NULL){
+			freeReplyObject(r);
+			goto out;
+		}
 		c->slots[0].ctx = c->ctx;
 		c->ctx = NULL;
 		strncpy(c->slots[0].host, host, HOST_LEN);
@@ -306,44 +305,61 @@ void deleteRedisClnt(struct redisClient* c){
 	free(c);
 }
 
-static BOOL tryLoadCluster(redisContext* ctx, struct clusterSlot slots[], int* nslot, long timeout);
+static BOOL tryLoadCluster(struct redisClient* c, redisContext* ctx);
 
 // when cmd fail in cluster enviroment, we will reload cluster slots info:
 // try slot in sequence until one success  
 static BOOL loadCluster(struct redisClient* c){
 	int i;
+	// c->nslot maybe changed in tryLoadCluster
+	int curnslot = c->nslot;
+	for(i=0;i<curnslot;i++){
 
-	for(i=0;i<c->nslot;i++){
 		struct clusterSlot* slot = &c->slots[i];
 		if(slot->ctx)
-			if(tryLoadCluster(slot->ctx, c->slots, &c->nslot, c->timeout))
+			if(tryLoadCluster(c, slot->ctx))
 				return TRUE;
 	}
 	return FALSE;
 }
 
 
-// use a redis context to fetch cluster slots info, then create contexts for all slots
-static BOOL tryLoadCluster(redisContext* ctx, struct clusterSlot* slots, int* nslot, long timeout)
+static BOOL tryLoadCluster(struct redisClient* c, redisContext* ctx)
 {
 	int ret;
-	long slotnum=SERVER_NUM;
 	redisReply* r = redisCommand(ctx, "cluster slots");
-	if(r == NULL)
+	if(r == NULL || r->elements<=0)
 		return FALSE;
-	struct slotArg slotarg = {slots, &slotnum};
-	ret = fetchSlot(r, &slotarg);
+	if(r->elements > c->nslot){//realloc
+		struct clusterSlot* slots = malloc(sizeof(struct clusterSlot)*r->elements);
+		if(slots == NULL){
+			if(r)
+				freeReplyObject(r);
+			return FALSE;
+		}
+		memset(slots, 0, sizeof(sizeof(struct clusterSlot)*r->elements));
+		int i;
+		// free old redis contexts
+		for(i=0; i<c->nslot; i++){
+			cleanSlot(&c->slots[i]);
+		}
+		free(c->slots);
+		c->slots = slots;
+		c->nslot = r->elements;
+	}
+	int len=c->nslot;
+	ret = fetchSlot(r, c->slots, &len);
+	assert(len==c->nslot);
 	if(ret != CC_SUCCESS){
 		freeReplyObject(r);
 		return FALSE;
 	}
+
 	int i;
-	for(i=0;i<slotnum;i++){
-		struct timeval tm = {timeout, 0};
-		struct clusterSlot* slot = &slots[i];
-		// free old one if exist
-		if(slot->ctx)
-			redisFree(slot->ctx);
+	// conect to all slots
+	for(i=0;i<c->nslot;i++){
+		struct timeval tm = {c->timeout, 0};
+		struct clusterSlot* slot = &c->slots[i];
 		slot->ctx = redisConnectWithTimeout(slot->host, slot->port, tm);
 		if(!slot->ctx || slot->ctx->err){
 			if(slot->ctx){
@@ -354,22 +370,18 @@ static BOOL tryLoadCluster(redisContext* ctx, struct clusterSlot* slots, int* ns
 		}
 		redisSetTimeout(slot->ctx, tm);
 		//slot->usetime = time(NULL);
-		slot->timeout = timeout;
-	}
-	//clean invalid slots if exist
-	for(i=slotnum; i<SERVER_NUM; i++){
-		cleanSlot(&slots[i]);
+		slot->timeout = c->timeout;
 	}
 	freeReplyObject(r);
-	*nslot = slotnum;
 	return TRUE;
 out:
 	freeReplyObject(r);
-	for(i=0; i<slotnum; i++){
-		cleanSlot(&slots[i]);
+	for(i=0; i<c->nslot; i++){
+		cleanSlot(&c->slots[i]);
 	}
 	return FALSE;
 }
+
 
 static void cleanSlot(struct clusterSlot* slot){
 	if(slot->ctx){

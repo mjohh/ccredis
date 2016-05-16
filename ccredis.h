@@ -21,7 +21,6 @@
 
 
 #define HOST_LEN 64
-#define SERVER_NUM 64
 #define BOOL int
 #define FALSE 0
 #define TRUE 1
@@ -48,7 +47,7 @@ struct redisClient{
 	redisContext *ctx;
 
 	////info for cluster enviroment
-	struct clusterSlot slots[SERVER_NUM];
+	struct clusterSlot* slots;
 	int nslot;
 };
 
