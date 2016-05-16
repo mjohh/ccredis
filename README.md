@@ -4,6 +4,7 @@
 - minimize: less than 1000 lines src
 - nature using way: using cluster and pipeline like single node
 - force highest efficiency: only allow keys have same hashslot in one pipeline
+- reconnection: for single node and cluster
 ```
 #define IP "127.0.0.1"
 #define PORT 6379
