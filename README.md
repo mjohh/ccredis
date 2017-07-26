@@ -2,11 +2,12 @@
 # ccredis
 Supporting pipelines for cluster and single node
 
-
-void cluster_pipelines_test(){
+`
+ void cluster_pipelines_test(){
 	printf("\n cluster_pipelines_test() start!!!\n");
 	struct redisClient* redis = createRedisClnt("172.23.25.178", 6379, 6);
 	ASSERT_PRNT(redis!=NULL, "\nconnect redis fail!!!");
+
 	do {
 		void* pipeline = createPipelines(1, redis);
 		////
@@ -77,4 +78,5 @@ void cluster_pipelines_test(){
 	
 	deleteRedisClnt(redis);
 	printf("\n cluster_pipelines_test() end!!!\n");
-}
+ }
+`
