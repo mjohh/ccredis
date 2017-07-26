@@ -3,7 +3,7 @@
 __1)Supporting pipelines for cluster and single node__  
 __2)Same creation interface for single node and cluster__  
 __3)Auto sharding for cluster__  
-__4)Auto reconnection for single node and cluster__
+__4)Auto reconnection for single node and cluster__  
 __5)No need do extra reading replys after flushing for cluster pipelines__
 ```c
 void cluster_pipelines_test(){
