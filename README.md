@@ -2,16 +2,19 @@
 # ccredis
 __1)Supporting pipelines for cluster and single node__  
 __2)Same creation interface for single node and cluster__  
-__3)Auto Sharding for cluster__  
+__3)Auto sharding for cluster__  
 __4)Auto reconnection for single node and cluster__
-
-
-	void cluster_pipelines_test(){
+__5)No need do extra reading replys after flushing for cluster pipelines__
+```c
+void cluster_pipelines_test(){
 	printf("\n cluster_pipelines_test() start!!!\n");
+	//1) create a connection via a redis node ip and port
+	//if cluster exists, creating connections to all nodes autoly
 	struct redisClient* redis = createRedisClnt("172.23.25.178", 6379, 6);
 	ASSERT_PRNT(redis!=NULL, "\nconnect redis fail!!!");
 
 	do {
+	//2) create pipelines to all nodes
 		void* pipeline = createPipelines(1, redis);
 		////
 		char r0[1024];
@@ -25,6 +28,7 @@ __4)Auto reconnection for single node and cluster__
 		char r8[1024];
 		long l = 1024;
 		int rv; 
+	//3) send "writing" commands, which will be buffered before flushing
 		rv = redisSet(redis, "k2{12345678900}", "v0", pipeline);
 		ASSERT_PRNT(rv==0, "\nset rv0=%d", rv);
 		rv = redisSet(redis, "k2{09876543211}", "v1", pipeline);
@@ -43,10 +47,10 @@ __4)Auto reconnection for single node and cluster__
 		ASSERT_PRNT(rv==0, "\nset rv7=%d", rv);
 		rv = redisSet(redis, "k2{akl;jfkjaw8}", "v8", pipeline);
 		ASSERT_PRNT(rv==0, "\nset rv8=%d", rv);
-
+	//4) flush buffered commands, autoly sharding to pipelines according keys
 		rv = flushPipelines(pipeline);
 		ASSERT_PRNT(rv==0, "\nflush rv=%d", rv);
-
+	//5) send "reading" commands which will be buffered before flushing
 		rv = redisGet(redis, "k2{12345678900}", r0, l, pipeline);
 		ASSERT_PRNT(rv==0, "\nget rv0=%d", rv);
 		rv = redisGet(redis, "k2{09876543211}", r1, l, pipeline);
@@ -65,6 +69,8 @@ __4)Auto reconnection for single node and cluster__
 		ASSERT_PRNT(rv==0, "\nget rv7=%d", rv);
 		rv = redisGet(redis, "k2{akl;jfkjaw8}", r8, l, pipeline);
 		ASSERT_PRNT(rv==0, "\nget rv8=%d", rv);
+	//6) flush buffered commands, autoly sharding to pipelines according keys
+	//especially, there are no extra reading replys' calling, and replys has been  in r* args of step 5)
 		flushPipelines(pipeline);
 		ASSERT_PRNT(strcmp(r0, "v0")==0, "\nredis Get0 fail!");
 		ASSERT_PRNT(strcmp(r1, "v1")==0, "\nredis Get1 fail!");
@@ -78,8 +84,8 @@ __4)Auto reconnection for single node and cluster__
 		deletePipelines(pipeline);	
 	} while(0);
 	////
-	
+	//7) release all resources
 	deleteRedisClnt(redis);
 	printf("\n cluster_pipelines_test() end!!!\n");
- 	}
-
+ }
+```
