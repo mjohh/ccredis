@@ -7,7 +7,6 @@ void cluster_pipelines_test(){
 	printf("\n cluster_pipelines_test() start!!!\n");
 	struct redisClient* redis = createRedisClnt("172.23.25.178", 6379, 6);
 	ASSERT_PRNT(redis!=NULL, "\nconnect redis fail!!!");
-	
 	do {
 		void* pipeline = createPipelines(1, redis);
 		////
