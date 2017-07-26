@@ -4,7 +4,7 @@
 #include "hiredis.h"
 #include "ccredis.h"
 
-static BOOL checkConnectResult(redisContext* c);
+//static BOOL checkConnectResult(redisContext* c);
 static BOOL loadCluster(struct redisClient* c);
 static void cleanSlot(struct clusterSlot* slot);
 
@@ -137,6 +137,10 @@ struct intaryArg {
 	long* ary;
 	long* len;
 };
+
+
+
+/*
 static int fetchIntegerArray(redisReply *reply, void* p) {
 	//if (reply->type == REDIS_REPLY_INTEGER) //need check!
 	struct intaryArg* val = (struct intaryArg*)p;
@@ -159,6 +163,7 @@ static int fetchIntegerArray(redisReply *reply, void* p) {
 	else
 		return CC_REPLY_ERR;
 }
+*/
 
 struct straryArg {
 	char** ary;
@@ -198,6 +203,20 @@ static int fetchStringArray(redisReply *reply, void* p) {
 	return _fetchStringArray(reply, ary, strlen, arylen);
 }
 
+/*
+static BOOL checkConnectResult(redisContext* c)
+{
+    if (NULL == c)
+    {
+        printf("NULL point!\n");
+        return 0;
+    }
+    //return 0;
+
+    return 1;
+}*/
+
+/*
 static int fetchTime(redisReply *reply, void* p) {
 	struct timeval* val = (struct timeval*)p;
 	if (reply->type == REDIS_REPLY_ARRAY) {
@@ -214,7 +233,7 @@ static int fetchTime(redisReply *reply, void* p) {
 	else
 		return CC_REPLY_ERR;
 }
-
+*/
 
 static int fetchSlot(redisReply *reply, struct clusterSlot* slots, int* len)
 {
@@ -248,10 +267,11 @@ struct redisClient* createRedisClnt(const char* host, int port, int timeout){
 		return NULL;
 	memset(c, 0, sizeof(struct redisClient));
 	struct timeval tv = {timeout, 0};
+    c->timeout = timeout;
 	if((c->ctx = redisConnectWithTimeout(host, port, tv))==NULL || c->ctx->err){
 		goto out;
 	}
-
+	redisSetTimeout(c->ctx, tv);
 	redisReply* r = redisCommand(c->ctx, "info");
 	if(r == NULL)
 		goto out;
@@ -376,8 +396,9 @@ static BOOL tryLoadCluster(struct redisClient* c, redisContext* ctx)
 	return TRUE;
 out:
 	freeReplyObject(r);
-	for(i=0; i<c->nslot; i++){
-		cleanSlot(&c->slots[i]);
+    int j;
+	for(j=0; j<i; j++){
+		cleanSlot(&c->slots[j]);
 	}
 	return FALSE;
 }
@@ -404,6 +425,16 @@ static struct clusterSlot* findSlot(struct redisClient* c, int hashslot){
 	return NULL;
 }
 
+static int findSlotn(struct redisClient* c, int hashslot){
+	int i;
+	for(i=0;i<c->nslot;i++){
+		struct clusterSlot* slot = &(c->slots[i]);
+		if(hashslot>=slot->startslot && hashslot<=slot->endslot)
+			return i;
+	}
+	return -1;
+}
+
 static redisContext* findContext(struct redisClient* c, int hashslot){
 	redisContext* ctx;
 	assert(c->bcluster);
@@ -427,7 +458,12 @@ static BOOL isSameHashslot(const char** keys, size_t keysz, size_t keynum){
 
 
 static BOOL isServerClosed(redisContext* c){
-	return (c->err == REDIS_ERR_EOF || strstr(c->errstr, "Server closed"));
+        if (c->err == REDIS_ERR_EOF || strstr(c->errstr, "Server closed"))
+            return 1;
+        if (c->err == REDIS_ERR_IO || strstr(c->errstr, "Connection reset by peer"))
+            return 1;
+        return 0;
+
 }
 
 static BOOL reconnectServer(struct redisClient* c){
@@ -525,13 +561,17 @@ struct pipeLine{
 	int used;
 };
 
+
 int pushPipeline(void* pipeline, sds cmdstr, void* result, size_t resultsz, fetchFunc fetchfunc);
+int executePipelines(struct redisClient* c, int hashslot, sds cmdstr, 
+		void* result, int resultsz, fetchFunc fetch, void* pipeline); 
 
 int executeImplPipeline(struct redisClient* c, int hashslot, sds cmdstr, 
 		void* result, int resultsz, fetchFunc fetch, void* pipeline){
 	struct pipeLine* p = (struct pipeLine*)pipeline;
 	if (p->used == 0){
-		assert(p->c==NULL);
+		// may be used after crated first time or after last flush
+		////assert(p->c==NULL);
 		p->c = c;
 		if(p->c->bcluster){
 			p->hashslot = hashslot;
@@ -539,8 +579,8 @@ int executeImplPipeline(struct redisClient* c, int hashslot, sds cmdstr,
 	}else{
 		if(p->c != c)
 			return CC_PIPELINE_ERR;
-		if(p->c->bcluster && p->hashslot != hashslot)
-			return CC_NOT_SAME_HASHSLOT;
+		//if(p->c->bcluster && p->hashslot != hashslot)
+		//	return CC_NOT_SAME_HASHSLOT;
 	}
 	pushPipeline(p, cmdstr, result, resultsz, fetch);
 	return CC_SUCCESS;
@@ -586,11 +626,19 @@ int pushPipeline(void* pipeline, sds cmdstr, void* result, size_t resultsz, fetc
 	struct pipeLine* p = (struct pipeLine*)pipeline;
 	if(p->len == p->used){
 		// extend autoly
-		void* cmds = malloc(sizeof(struct cmdObj)*(p->len+64));
+		struct cmdObj* cmds = (struct cmdObj*)malloc(sizeof(struct cmdObj)*(p->len+64));
 		if(cmds==NULL)
 			return CC_NO_RESOURCE;
 		memset(cmds, 0, sizeof(struct cmdObj)*(p->len+64));
 		memcpy(cmds, p->cmds, sizeof(struct cmdObj)*p->len);
+		int i;
+		// ptr in buf is ptr to {pret, sizof(ret)}
+		// now cmds[i].result may ptr to p->cmds[i].buf, which will be freed soon
+		for (i = 0; i < p->len; i++) {
+			if (p->cmds[i].result == p->cmds[i].buf) {
+				cmds[i].result = cmds[i].buf;
+			}
+		}
 		p->len = p->len + 64;
 		free(p->cmds);
 		p->cmds = cmds;
@@ -614,8 +662,10 @@ static int appendAllCmds(void* pipeline, redisContext* ctx){
 	struct pipeLine* p = (struct pipeLine*)pipeline;
 	int i;
 	for(i=0; i<p->used; i++){
-		if(REDIS_OK != redisAppendCommand(ctx, p->cmds[i].cmdstr))
+		int ret = redisAppendCommand(ctx, p->cmds[i].cmdstr);
+		if(REDIS_OK != ret){
 			return CC_RQST_ERR;
+		}
 	}
 	return CC_SUCCESS;
 }
@@ -629,6 +679,8 @@ static void freeAllCmdStrs(void* pipeline){
 			p->cmds[i].cmdstr = NULL;
 		}
 	}
+	// reset pipeline
+	p->used = 0;
 }
 
 static int fetchAllReplys(void* pipeline, redisContext* ctx){
@@ -676,6 +728,8 @@ int flushPipeline(void* pipeline){
 			goto out;
 		}
 		ret = fetchAllReplys(p, ctx);
+		if(ret != CC_SUCCESS){
+		}
 	}
 
 	//// double try
@@ -741,9 +795,110 @@ int executeCmd(struct redisClient* c, int hashslot, sds cmdstr,
 	if(pipeline == NULL){
 		return executeImpl(c,hashslot,cmdstr,result,fetch);
 	}else{
-		return executeImplPipeline(c,hashslot,cmdstr,result,resultsz,fetch,pipeline);
+		return executePipelines(c,hashslot,cmdstr,result,resultsz,fetch,pipeline);
 	}
 }
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+//multipipeline
+struct Pipelines{
+	int magic;//to diffent to pipeline
+	struct pipeLine** pipelines;
+	int n;
+};
+
+#define MULTI_PIPELINE_MAGIC 0x90808791
+
+void* createPipelines(int len, struct redisClient* c){
+	if (len < 1){
+		return NULL;
+	}
+	if (c == NULL){
+		return NULL;
+	}
+	if (c->bcluster == 0){
+		return createPipeline(len);
+	}
+	struct Pipelines* mp = (struct Pipelines*)malloc(sizeof(struct Pipelines));
+	if (mp == NULL){
+		return NULL;
+	}
+	mp->magic = MULTI_PIPELINE_MAGIC;
+	mp->n = c->nslot;
+	if (mp->n <= 0){
+		free(mp);
+		return NULL;
+	}
+	mp->pipelines = malloc(sizeof(void*)*mp->n);
+	if (mp->pipelines == NULL) {
+		free(mp);
+		return NULL;
+	}
+	int i;
+	for (i = 0; i < mp->n; i++){
+		mp->pipelines[i] = (struct pipeLine*)createPipeline(len);
+		//assert(mp->pipelines[i] != NULL);
+	}
+	return mp;
+	
+}
+
+void deletePipelines(void* pipeline) {
+	if (pipeline == NULL) {
+		return;
+	}
+	if (*(int*)pipeline == MULTI_PIPELINE_MAGIC){
+		struct Pipelines* mp = (struct Pipelines*)pipeline;
+		int i;
+		for (i = 0; i < mp->n; i++) {
+			deletePipeline(mp->pipelines[i]);
+		}
+		free(mp->pipelines);
+		free(mp);
+	}else{
+		deletePipeline(pipeline);
+	}
+}
+
+int executePipelines(struct redisClient* c, int hashslot, sds cmdstr, 
+		void* result, int resultsz, fetchFunc fetch, void* pipeline) {
+
+	if (*(int*)pipeline == MULTI_PIPELINE_MAGIC){
+		int slot = findSlotn(c, hashslot);
+		if (slot <= -1){
+			return -1;
+		}
+		struct Pipelines* p = (struct Pipelines*)pipeline;
+		if (slot > p->n){
+			return -2;
+		}
+		return executeImplPipeline(c, hashslot, cmdstr, result, resultsz, fetch, p->pipelines[slot]);
+	}else{
+		return executeImplPipeline(c, hashslot, cmdstr, result, resultsz, fetch, pipeline);
+	}
+	return 0;
+}
+
+
+int flushPipelines(void* pipeline){
+	if (*(int*)pipeline == MULTI_PIPELINE_MAGIC){
+		struct Pipelines* p = (struct Pipelines*)pipeline;
+		int i;
+		int ret = 0;
+		for (i = 0; i < p->n; i++){
+			ret += flushPipeline(p->pipelines[i]);
+		}
+		return ret;
+	}else{
+		return flushPipeline(pipeline);
+	}
+	return 0;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////
 
 
 // *ret: the numberof keys that were removed
@@ -856,3 +1011,163 @@ int redisHmset(struct redisClient* c, const char* key, const char** fields, cons
 	return executeCmd(c, hashSlot(key), cmd, &retstr, sizeof(retstr), fetchString, pipeline);
 }
 
+int redisLlpush(struct redisClient* c, const char* key, char** vals, long strsize, long arylen, void* pipeline){
+	sds cmd = cmdnew("lpush");
+	cmd = cmdcat(cmd, key);
+	int i = 0;
+	for(; i < arylen; ++i){
+		cmd = sdscat(sdscat(cmd, " "), (char*)vals+strsize*i);
+	}
+	//do not care string returned
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisLrange(struct redisClient* c, const char* key, int start, int stop, char **vals, long strsize, long *arylen, void* pipeline){
+	sds cmd = cmdnew("LRANGE");
+	cmd = sdscatfmt(cmd," %s %i %i", key, start, stop);
+
+	struct straryArg arg = {vals, strsize, arylen};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchStringArray, pipeline);
+}
+
+int redisLlen(struct redisClient* c, const char* key, char* val, long len, void* pipeline){
+	sds cmd = cmdnew("llen");
+	cmd = cmdcat(cmd, key);
+	struct strArg arg = {val, len};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisLrem(struct redisClient* c, const char* key, int count, const char* val, void* pipeline){
+	sds cmd = cmdnew("lrem");
+	cmd = sdscatfmt(cmd," %s %i %s", key, count, val);
+	//do not care string returned
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisLindex(struct redisClient* c, const char* key, int index, char* val, long len, void* pipeline){
+	sds cmd = cmdnew("lindex");
+	cmd = sdscatfmt(cmd," %s %i %s", key, index);
+	struct strArg arg = {val, len};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisLset(struct redisClient* c, const char* key, int index, const char* val, void* pipeline){
+	sds cmd = cmdnew("lset");
+	cmd = sdscatfmt(cmd," %s %i %s", key, index, val);
+	//do not care string returned
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisLtrim(struct redisClient* c, const char* key, int start, int stop, void* pipeline)
+{
+	sds cmd = cmdnew("ltrim");
+	cmd = sdscatfmt(cmd," %s %i %i", key, start, stop);
+	//do not care string returned
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+
+int redisSadd(struct redisClient* c, const char* key, char** vals, long strsize, long arylen, void* pipeline)
+{
+	sds cmd = cmdnew("sadd");
+	cmd = cmdcat(cmd, key);
+	int i = 0;
+	for(; i < arylen; ++i){
+		cmd = sdscat(sdscat(cmd, " "), (char*)vals+strsize*i);
+	}
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisScard(struct redisClient* c, const char* key,  char* val, long len, void* pipeline)
+{
+	sds cmd = cmdnew("scard");
+	cmd = sdscatfmt(cmd," %s", key);
+	struct strArg arg = {val, len};
+
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisSunionstore(struct redisClient* c, const char* dstkey, char** keys, long strsize, long arylen, long *res, void* pipeline)
+{
+	sds cmd = cmdnew("sunionstore");
+	cmd = cmdcat(cmd, dstkey);
+	int i = 0;
+	for(; i < arylen; ++i){
+		cmd = sdscat(sdscat(cmd, " "), (char*)keys+strsize*i);
+	}
+	return executeCmd(c, hashSlot(dstkey), cmd, res, -1, fetchInteger, pipeline);
+}
+
+int redisSismember(struct redisClient* c, const char* key, char* val, long len, void* pipeline)
+{
+	sds cmd = cmdnew("sismember");
+	cmd = sdscatfmt(cmd," %s", key);
+	struct strArg arg = {val, len};
+
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisSrem(struct redisClient* c, const char* key, char** vals, long strsize, long arylen, void* pipeline)
+{
+	sds cmd = cmdnew("srem");
+	cmd = cmdcat(cmd, key);
+	int i = 0;
+	for(; i < arylen; ++i){
+		cmd = sdscat(sdscat(cmd, " "), (char*)vals+strsize*i);
+	}
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisSadds(struct redisClient* c,const char* key,const char* val,void*pipeline){
+	sds cmd = cmdnew("sadd");
+	cmd = sdscatfmt(cmd," %s %s",key,val);
+	struct strArg arg = {NULL,0};
+	return executeCmd(c,hashSlot(key),cmd,&arg,sizeof(arg),fetchString,pipeline);
+}
+
+//sorted set
+int redisZadd(struct redisClient* c, const char* key, char** scores, char** vals, long strsize, long arylen, void* pipeline)
+{
+	sds cmd = cmdnew("zadd");
+	cmd = cmdcat(cmd, key);
+
+	int i = 0;
+	for(; i < arylen; ++i){
+		cmd = sdscat(sdscat(cmd, " "), (char*)scores+strsize*i);
+		cmd = sdscat(sdscat(cmd, " "), (char*)vals+strsize*i);
+	}
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+//sorted set
+int redisZadds(struct redisClient* c, const char* key, unsigned long score, char* val, void* pipeline)
+{
+	sds cmd = cmdnew("zadd");
+	cmd = sdscatfmt(cmd," %s %u %s",key, score, val);
+
+	struct strArg arg = {NULL, 0};
+	return executeCmd(c, hashSlot(key), cmd, &arg, sizeof(arg), fetchString, pipeline);
+}
+
+int redisZcount(struct redisClient* c, const char* key, unsigned long score_min, unsigned long score_max, long *res, void* pipeline)
+{
+	sds cmd = cmdnew("zcount");
+	cmd = sdscatfmt(cmd," %s %u %u",key, score_min, score_max);
+
+	return executeCmd(c, hashSlot(key), cmd, res, -1, fetchInteger, pipeline);
+}
+
+int redisZremrangebyscore(struct redisClient* c, const char* key, unsigned long score_min, unsigned long score_max, long *res, void* pipeline)
+{
+	sds cmd = cmdnew("zremrangebyscore");
+	cmd = sdscatfmt(cmd," %s %u %u",key, score_min, score_max);
+
+	return executeCmd(c, hashSlot(key), cmd, res, -1, fetchInteger, pipeline);
+}
