@@ -2,7 +2,8 @@
 # ccredis
 __1)Supporting pipelines for cluster and single node__  
 __2)Same creation interface for single node and cluster__  
-__3)Auto reconnection for single node and cluster__
+__3)Auto Sharding for cluster__  
+__4)Auto reconnection for single node and cluster__
 
 
 	void cluster_pipelines_test(){
