@@ -1,55 +1,81 @@
 
 # ccredis
-- focus on using cluster and pipeline besides single node
-- minimize: less than 1000 lines src
-- nature using way: using cluster and pipeline like single node
-- force highest efficiency: only allow keys have same hashslot in one pipeline
-- reconnection: for single node and cluster
-```
-#define IP "127.0.0.1"
-#define PORT 6379
-#define TIMEOUT 2
+Supporting pipelines for cluster and single node
 
-#define CLUSTER_PORT 7001
 
-static int tests = 0, fails = 0;
-#define test(_s) { printf("#%02d ", ++tests); printf(_s); }
-#define test_cond(_c) if(_c) printf("\033[0;32mPASSED\033[0;0m\n"); else {printf("\033[0;31mFAILED\033[0;0m\n"); fails++;}
+void cluster_pipelines_test(){
+	printf("\n cluster_pipelines_test() start!!!\n");
+	struct redisClient* redis = createRedisClnt("172.23.25.178", 6379, 6);
+	ASSERT_PRNT(redis!=NULL, "\nconnect redis fail!!!");
 
-static void testclusterpipeline(){
-        struct redisClient* c = createRedisClnt(IP, CLUSTER_PORT, TIMEOUT);
-	assert(c);
-	void* pipeline = createPipeline(32);
-	assert(pipeline);
+	do {
+		void* pipeline = createPipelines(1, redis);
+		////
+		char r0[1024];
+		char r1[1024];
+		char r2[1024];
+		char r3[1024];
+		char r4[1024];
+		char r5[1024];
+		char r6[1024];
+		char r7[1024];
+		char r8[1024];
+		long l = 1024;
+		int rv; 
+		rv = redisSet(redis, "k2{12345678900}", "v0", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv0=%d", rv);
+		rv = redisSet(redis, "k2{09876543211}", "v1", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv1=%d", rv);
+		rv = redisSet(redis, "k2{12345098762}", "v2", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv2=%d", rv);
+		rv = redisSet(redis, "k2{67890543213}", "v3", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv3=%d", rv);
+		rv = redisSet(redis, "k2{qwertyuiop4}", "v4", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv4=%d", rv);
+		rv = redisSet(redis, "k2{mnbvcxzlke5}", "v5", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv5=%d", rv);
+		rv = redisSet(redis, "k2{djehjkflsi6}", "v6", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv6=%d", rv);
+		rv = redisSet(redis, "k2{ssfkliowrj7}", "v7", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv7=%d", rv);
+		rv = redisSet(redis, "k2{akl;jfkjaw8}", "v8", pipeline);
+		ASSERT_PRNT(rv==0, "\nset rv8=%d", rv);
 
-	test("redisSet/redisGet ");
-	// add tag {p} for pipeline
-        int rv = redisSet(c, "{p}k1", "v1", pipeline);
-	assert(rv == CC_SUCCESS);
+		rv = flushPipelines(pipeline);
+		ASSERT_PRNT(rv==0, "\nflush rv=%d", rv);
 
-	char val[32];
-	// to for pipeline only accept key with same hashslot, so add {p} to assure it!
-	rv = redisGet(c,"{p}k1",val,32,pipeline);
-	test_cond(rv == CC_SUCCESS);
-
-	test("redisDel ");
-	long ret1;
-	rv = redisDel(c, "{p}k1", &ret1, pipeline);
-        test_cond(rv == CC_SUCCESS);
-
-	test("redisDel none exist key ");
-	long ret2;
-	rv = redisDel(c, "{p}k1", &ret2, pipeline);
-        test_cond(rv == CC_SUCCESS);
-
-	test("redisGet none exist key ");
-	char val1[32];
-	rv = redisGet(c,"{p}k1",val1,32,pipeline);
-        test_cond(rv == CC_SUCCESS);
-  
-        test("flushPipeline ");
-	rv = flushPipeline(pipeline);
+		rv = redisGet(redis, "k2{12345678900}", r0, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv0=%d", rv);
+		rv = redisGet(redis, "k2{09876543211}", r1, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv1=%d", rv);
+		rv = redisGet(redis, "k2{12345098762}", r2, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv2=%d", rv);
+		rv = redisGet(redis, "k2{67890543213}", r3, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv3=%d", rv);
+		rv = redisGet(redis, "k2{qwertyuiop4}", r4, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv4=%d", rv);
+		rv = redisGet(redis, "k2{mnbvcxzlke5}", r5, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv5=%d", rv);
+		rv = redisGet(redis, "k2{djehjkflsi6}", r6, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv6=%d", rv);
+		rv = redisGet(redis, "k2{ssfkliowrj7}", r7, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv7=%d", rv);
+		rv = redisGet(redis, "k2{akl;jfkjaw8}", r8, l, pipeline);
+		ASSERT_PRNT(rv==0, "\nget rv8=%d", rv);
+		flushPipelines(pipeline);
+		ASSERT_PRNT(strcmp(r0, "v0")==0, "\nredis Get0 fail!");
+		ASSERT_PRNT(strcmp(r1, "v1")==0, "\nredis Get1 fail!");
+		ASSERT_PRNT(strcmp(r2, "v2")==0, "\nredis Get2 fail!");
+		ASSERT_PRNT(strcmp(r3, "v3")==0, "\nredis Get3 fail!");
+		ASSERT_PRNT(strcmp(r4, "v4")==0, "\nredis Get4 fail!");
+		ASSERT_PRNT(strcmp(r5, "v5")==0, "\nredis Get5 fail!");
+		ASSERT_PRNT(strcmp(r6, "v6")==0, "\nredis Get6 fail!");
+		ASSERT_PRNT(strcmp(r7, "v7")==0, "\nredis Get7 fail!");
+		ASSERT_PRNT(strcmp(r8, "v8")==0, "\nredis Get8 fail!");
+		deletePipelines(pipeline);	
+	} while(0);
+	////
 	
-	test_cond(rv == CC_SUCCESS && 0==strcmp("v1", val) && ret1 == 1 && ret2 == 0 && val1[0] == 0);
-``` 
-  
+	deleteRedisClnt(redis);
+	printf("\n cluster_pipelines_test() end!!!\n");
+}
