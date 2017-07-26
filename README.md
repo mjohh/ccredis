@@ -1,9 +1,11 @@
 
 # ccredis
-Supporting pipelines for cluster and single node
+__1)Supporting pipelines for cluster and single node__  
+__2)Same creation interface for single node and cluster__  
+__3)Auto reconnection for single node and cluster__
 
-`
- void cluster_pipelines_test(){
+
+	void cluster_pipelines_test(){
 	printf("\n cluster_pipelines_test() start!!!\n");
 	struct redisClient* redis = createRedisClnt("172.23.25.178", 6379, 6);
 	ASSERT_PRNT(redis!=NULL, "\nconnect redis fail!!!");
@@ -78,5 +80,5 @@ Supporting pipelines for cluster and single node
 	
 	deleteRedisClnt(redis);
 	printf("\n cluster_pipelines_test() end!!!\n");
- }
-`
+ 	}
+
